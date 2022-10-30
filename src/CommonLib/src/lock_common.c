@@ -16,7 +16,12 @@ PFUNC_LockIsOwner        LockIsOwner = NULL;
 #pragma warning(push)
 // warning C4028: formal parameter 1 different from declaration
 #pragma warning(disable:4028)
-
+// 5. A spinlock uses the busy waiting technique, thus it must not be used for large portions of code
+//    because it will waste too much CPU power, unlike the Mutex which uses the block waiting technique
+//    by alternatively blocking and unblocking threads for a better efficiency 
+//    which can be used for synchronizing large portions of code.
+//    The spinlock is a primitive synchronization mechanism which are provided by the OS, 
+//    while the mutex is an executive one.
 void
 LockSystemInit(
     IN      BOOLEAN             MonitorSupport

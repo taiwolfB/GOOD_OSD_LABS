@@ -36,6 +36,8 @@ MutexAcquire(
     ASSERT( NULL != Mutex);
     ASSERT( NULL != pCurrentThread );
 
+    // 3.a) The lines 39-45 takes care of recursive mutexes, which happen when
+    // the same thread tries to take the lock multiples times, and we just increase the RecursivityDepth.
     if (pCurrentThread == Mutex->Holder)
     {
         ASSERT( Mutex->CurrentRecursivityDepth < Mutex->MaxRecursivityDepth );
@@ -46,6 +48,8 @@ MutexAcquire(
 
     oldState = CpuIntrDisable();
 
+    // 3. b) The LockAcquire() here is used to avoid race conditions when multiple different threads
+    //       would try to Acquire the same taken lock.
     LockAcquire(&Mutex->MutexLock, &dummyState );
     if (NULL == Mutex->Holder)
     {
@@ -53,12 +57,16 @@ MutexAcquire(
         Mutex->CurrentRecursivityDepth = 1;
     }
 
+    // 3. c) The loop takes care of the waiting part, in which a Mutex which is taken by another thread
+    //       waits for it to unlock.
     while (Mutex->Holder != pCurrentThread)
     {
         InsertTailList(&Mutex->WaitingList, &pCurrentThread->ReadyList);
         ThreadTakeBlockLock();
         LockRelease(&Mutex->MutexLock, dummyState);
         ThreadBlock();
+        // 3. b) Here the LockAcquire is used after the unblocking of a thread, such that it is marked as taken 
+        //       and these 3 lines (64-68) give all the threads equal chance of taking the lock.
         LockAcquire(&Mutex->MutexLock, &dummyState );
     }
 
@@ -98,6 +106,8 @@ MutexRelease(
         PTHREAD pThread = CONTAINING_RECORD(pEntry, THREAD, ReadyList);
 
         // wakeup first thread
+        // 4. a) If the Holder is set to NULL, then another Thread which was waiting for that Mutex 
+        // can come in and take it, and the waiting list will not be respected.
         Mutex->Holder = pThread;
         Mutex->CurrentRecursivityDepth = 1;
         ThreadUnblock(pThread);

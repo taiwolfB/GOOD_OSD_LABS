@@ -16,6 +16,8 @@
 #include "ex_timer.h"
 #include "vmm.h"
 #include "pit.h"
+#include "../semaphore.h"
+#include "log.h"
 
 
 #pragma warning(push)
@@ -772,6 +774,39 @@ STATUS
     }
 
     return STATUS_SUCCESS;
+}
+
+STATUS
+(__cdecl SemaphoreIpiFunction)(
+    IN_OPT  PVOID   Context
+    )
+{
+    PSEMAPHORE pSemaphore = (PSEMAPHORE)Context;
+    ASSERT(pSemaphore != NULL);
+
+    SemaphoreUp(pSemaphore, 1);
+
+    return STATUS_SUCCESS;
+}
+
+void
+(__cdecl CmdTestSemaphs) (
+    IN      QWORD       NumberOfParameters
+    )
+{
+    LOGL("Test semaphores started\n");
+    ASSERT(NumberOfParameters == 0);
+
+    SEMAPHORE Semaphore;
+    SemaphoreInit(&Semaphore, 0);
+
+    SMP_DESTINATION destination = { 0 };
+
+    SmpSendGenericIpiEx(SemaphoreIpiFunction, &Semaphore, NULL, NULL, FALSE, 
+        SmpIpiSendToAllExcludingSelf, destination);
+    SemaphoreDown(&Semaphore, SmpGetNumberOfActiveCpus() - 1);
+
+    LOGL("Test semaphores FINISHED\n");
 }
 
 #pragma warning(pop)
