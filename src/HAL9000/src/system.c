@@ -59,10 +59,22 @@ SystemPreinit(
     ProcessSystemPreinit();
 }
 
+static
+STATUS
+(__cdecl _HelloIpi)(
+    IN_OPT PVOID Context
+    )
+{
+    UNREFERENCED_PARAMETER(Context);
+
+    LOGP("Hello from CPU with ApicId %x\n", GetCurrentPcpu()->ApicId);
+    return STATUS_SUCCESS;
+}
+
 STATUS
 SystemInit(
-    IN  ASM_PARAMETERS*     Parameters
-    )
+    IN  ASM_PARAMETERS* Parameters
+)
 {
     STATUS status;
     PCPU* pCpu;
@@ -71,9 +83,9 @@ SystemInit(
     pCpu = NULL;
 
     LogSystemInit(LogLevelInfo,
-                  LogComponentInterrupt | LogComponentIo | LogComponentAcpi,
-                  TRUE
-                  );
+        LogComponentInterrupt | LogComponentIo | LogComponentAcpi,
+        TRUE
+    );
 
     // if validation fails => the system will HALT
     CpuMuValidateConfiguration();
@@ -101,7 +113,7 @@ SystemInit(
         OsGetBuildType(),
         OsGetVersion(),
         OsGetBuildDate()
-        );
+    );
 
     status = OsInfoInit();
     if (!SUCCEEDED(status))
@@ -134,10 +146,10 @@ SystemInit(
     LOGL("InitIdtHandlers succeeded\n");
 
     status = MmuInitSystem(Parameters->KernelBaseAddress,
-                           (DWORD) Parameters->KernelSize,
-                           Parameters->MemoryMapAddress,
-                           Parameters->MemoryMapEntries
-                           );
+        (DWORD)Parameters->KernelSize,
+        Parameters->MemoryMapAddress,
+        Parameters->MemoryMapEntries
+    );
     if (!SUCCEEDED(status))
     {
         LOG_FUNC_ERROR("MmuInitSystem", status);
@@ -149,7 +161,7 @@ SystemInit(
     if (IsBooleanFlagOn(Parameters->MultibootInformation->Flags, MULTIBOOT_FLAG_BOOT_MODULES_PRESENT))
     {
         status = BootModulesInit((PHYSICAL_ADDRESS)(QWORD)Parameters->MultibootInformation->ModuleAddress,
-                                Parameters->MultibootInformation->ModuleCount);
+            Parameters->MultibootInformation->ModuleCount);
         if (!SUCCEEDED(status))
         {
             LOG_FUNC_ERROR("BootModulesMap", status);
@@ -195,12 +207,12 @@ SystemInit(
     // this needs to be before the call to IomuInitSystem because
     // by the time we enable interrupts we want our TSS descriptor to be installed
     status = CpuMuAllocAndInitCpu(&pCpu,
-    // C28039: The type of actual parameter 'CpuGetApicId()' should exactly match the type 'APIC_ID'
+        // C28039: The type of actual parameter 'CpuGetApicId()' should exactly match the type 'APIC_ID'
 #pragma warning(suppress: 28039)
-                                  CpuGetApicId(),
-                                  STACK_DEFAULT_SIZE,
-                                  m_systemData.NumberOfTssStacks
-                                  );
+        CpuGetApicId(),
+        STACK_DEFAULT_SIZE,
+        m_systemData.NumberOfTssStacks
+    );
     if (!SUCCEEDED(status))
     {
         LOG_FUNC_ERROR("CpuMuAllocAndInitCpu", status);
@@ -210,7 +222,7 @@ SystemInit(
 
     // initialize IO system
     // this also initializes the IDT
-    status = IomuInitSystem(GdtMuGetCS64Supervisor(),m_systemData.NumberOfTssStacks );
+    status = IomuInitSystem(GdtMuGetCS64Supervisor(), m_systemData.NumberOfTssStacks);
     if (!SUCCEEDED(status))
     {
         LOG_FUNC_ERROR("IomuInitSystem", status);
@@ -288,7 +300,7 @@ SystemInit(
     status = MmuInitThreadingSystem();
     if (!SUCCEEDED(status))
     {
-        LOG_FUNC_ERROR("MmuInitThreadingSystem", status );
+        LOG_FUNC_ERROR("MmuInitThreadingSystem", status);
         return status;
     }
 
@@ -312,6 +324,69 @@ SystemInit(
     }
 
     LOGL("Network stack successfully initialized\n");
+
+    // Part I a) When HAL9000 boots, an IPI will be sent to all the CPUs except himself, 
+    //           which will LOG the "Hello" Message. The last parameter
+    //           tells the function if it should wait for the handling completion 
+    //           before returning. If we change the last parameter to TRUE, 
+    //           then the Tests present in Tests module will execute after IPI was handled.
+    // status = SmpSendGenericIpi(_HelloIpi, NULL, NULL, NULL, FALSE);
+    // if (!SUCCEEDED(status))
+    // {
+    //    LOG_FUNC_ERROR("SmpSendGenericIpi", status);
+    //    return status;
+    // }
+
+    // Part I d)
+
+    // SMP_DESTINATION dest = { 0 };
+    // status = SmpSendGenericIpiEx(_HelloIpi, NULL, NULL, NULL, TRUE, SmpIpiSendToAllIncludingSelf, dest);
+
+    // if (!SUCCEEDED(status))
+    // {
+    //     LOG_FUNC_ERROR("SmpSendGenericIpi", status);
+    //     return status;
+    // }
+
+
+    // Part I e)
+
+    // SMP_DESTINATION dest = { SmpGetNumberOfActiveCpus() - 1 };
+    // status = SmpSendGenericIpiEx(_HelloIpi, NULL, NULL, NULL, TRUE, SmpIpiSendToCpu, dest);
+
+    // if (!SUCCEEDED(status))
+    // {
+    //     LOG_FUNC_ERROR("SmpSendGenericIpi", status);
+    //     return status;
+    // }
+
+
+    // Part I f
+
+    SMP_DESTINATION dest;
+    memzero(&dest, sizeof(SMP_DESTINATION));
+    CPU_AFFINITY logicalAddressCurrentCpu = 1;
+    for (DWORD i = 1; i < SmpGetNumberOfActiveCpus(); i++)
+    {
+        // compute logical address of the current CPU by bit shifting
+        logicalAddressCurrentCpu <<= 1;
+        LOGP("Affinity %x\n", logicalAddressCurrentCpu);
+        // if the current cpu is an odd one in the physical address, 
+        // do an or between logical addresses of the logical address 
+        // of the current cpu and the group affinity
+        // if not, do an or with 0 such that the answer does not change
+        dest.Group.Affinity |= i % 2 == 1 ? logicalAddressCurrentCpu : 0;
+    }
+
+    status = SmpSendGenericIpiEx(_HelloIpi, NULL, NULL, NULL, TRUE, SmpIpiSendToGroup, dest);
+
+    if (!SUCCEEDED(status))
+    {
+        LOG_FUNC_ERROR("SmpSendGenericIpi", status);
+        return status;
+    }
+
+
 
     return status;
 }
