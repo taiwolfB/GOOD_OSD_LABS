@@ -7,6 +7,7 @@
 #include "mmu.h"
 #include "process_internal.h"
 #include "dmp_cpu.h"
+#include "thread.h"
 
 extern void SyscallEntry();
 
@@ -54,6 +55,7 @@ SyscallHandler(
             __leave;
         }
 
+        // 4. The sysCallId comes straight from the CPU's RegisterR8
         sysCallId = usermodeProcessorState->RegisterValues[RegisterR8];
 
         LOG_TRACE_USERMODE("System call ID is %u\n", sysCallId);
@@ -67,7 +69,19 @@ SyscallHandler(
         case SyscallIdIdentifyVersion:
             status = SyscallValidateInterface((SYSCALL_IF_VERSION)*pSyscallParameters);
             break;
-        // STUDENT TODO: implement the rest of the syscalls
+        case SyscallIdFileWrite:
+            status = SyscallFileWrite(
+                (UM_HANDLE)pSyscallParameters[0],
+                (PVOID)pSyscallParameters[1],
+                (QWORD)pSyscallParameters[2],
+                NULL);
+            break;
+        case SyscallIdProcessExit:
+            SyscallProcessExit((STATUS)pSyscallParameters[0]);
+            break;
+        case SyscallIdThreadExit:
+            SyscallThreadExit((STATUS)pSyscallParameters[0]);
+            break;
         default:
             LOG_ERROR("Unimplemented syscall called from User-space!\n");
             status = STATUS_UNSUPPORTED;
@@ -170,3 +184,45 @@ SyscallValidateInterface(
 }
 
 // STUDENT TODO: implement the rest of the syscalls
+
+STATUS
+SyscallFileWrite(
+    IN  UM_HANDLE                   FileHandle,
+    IN_READS_BYTES(BytesToWrite)
+    PVOID                       Buffer,
+    IN  QWORD                       BytesToWrite,
+    OUT QWORD* BytesWritten
+    )
+{
+    UNREFERENCED_PARAMETER(BytesWritten);
+    UNREFERENCED_PARAMETER(BytesToWrite);
+    UNREFERENCED_PARAMETER(Buffer);
+    if (FileHandle == UM_FILE_HANDLE_STDOUT) {
+        LOG("[%s]:[%s]\n", ProcessGetName(NULL), Buffer);
+        return STATUS_SUCCESS;
+    }
+
+    return STATUS_NO_HANDLING_REQUIRED;
+}
+
+STATUS
+SyscallProcessExit(
+    const STATUS ExitStatus
+    )
+{
+    PPROCESS Process = GetCurrentProcess();
+    Process->TerminationStatus = ExitStatus;
+    LOG("Process has initiated termination\n");
+    ProcessTerminate(Process);
+    return STATUS_SUCCESS;
+}
+
+STATUS
+SyscallThreadExit(
+    const STATUS ExitStatus
+)
+{
+    LOG("Thread has initiated exit\n");
+    ThreadExit(ExitStatus);
+    return STATUS_SUCCESS;
+}

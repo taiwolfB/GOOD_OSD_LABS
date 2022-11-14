@@ -1,6 +1,8 @@
 #include "um_lib_base.h"
 #include "syscall_if.h"
 #include "syscall_no.h"
+#include "process.h"
+#include "thread"
 
 extern
 STATUS
@@ -15,6 +17,9 @@ SyscallValidateInterface(
     IN  SYSCALL_IF_VERSION          InterfaceVersion
     )
 {
+    // In order to dispatch a Syscall, we use the extern function SyscallEntry
+    // with one parameter being the SysCallId and then a kind of "Context" containing
+    // as many parameters as needed for the syscall.
     return SyscallEntry(SyscallIdIdentifyVersion, InterfaceVersion);
 }
 
