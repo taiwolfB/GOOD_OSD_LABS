@@ -243,6 +243,7 @@ VmmMapMemoryEx(
     return pVirtualAddress;
 }
 
+// 3. Multiple VAs are mapped to the same PA which might be a problem
 void
 VmmMapMemoryInternal(
     IN      PPAGING_DATA            PagingData,
@@ -267,7 +268,14 @@ VmmMapMemoryInternal(
     ctx.PageRights = PageRights;
     ctx.Invalidate = Invalidate;
     ctx.Uncacheable = Uncacheable;
-
+    // 1)  The rule for mapping the VA2PA is that the VA for Kernel mode starts with 0XFFFF8 
+    // for every Kernel mode address and it maps all the lower bits in a 1:1 mapping.
+    LOG("Will map virtual address 0x%X to physical address 0x%X\n",
+            BaseAddress, PhysicalAddress);
+    if (!_VmIsKernelAddress(BaseAddress)) {
+        LOG("Will map user space virtual address 0x%X to physical address 0x%X\n",
+            BaseAddress, PhysicalAddress);
+    }
     cr3.Raw = (QWORD) PagingData->BasePhysicalAddress;
 
     _VmWalkPagingTables(cr3,
@@ -373,6 +381,10 @@ VmmPreparePagingData(
     return STATUS_SUCCESS;
 }
 
+// 5. The function sets up the structures required for managing the paging tables
+// and maps the Virtual memory to Physical memory. This function is called for 
+// every new process/application in order to create a page table such that it knows how to access the PA.
+
 STATUS
 VmmSetupPageTables(
     INOUT   PPAGING_DATA            PagingDataWhereToMap,
@@ -401,9 +413,9 @@ VmmSetupPageTables(
     PagingData->BasePhysicalAddress = BasePhysicalAddress;
     PagingData->KernelSpace = KernelStructures;
 
-    LOG_TRACE_VMM("Will setup paging tables at physical address: 0x%X\n", PagingData->BasePhysicalAddress);
-    LOG_TRACE_VMM("BaseAddress: 0x%X\n", pBaseVirtualAddress);
-    LOG_TRACE_VMM("Size of paging tables: 0x%x\n", sizeReservedForPagingStructures);
+    LOG("Will setup paging tables at physical address: 0x%X\n", PagingData->BasePhysicalAddress);
+    LOG("BaseAddress: 0x%X\n", pBaseVirtualAddress);
+    LOG("Size of paging tables: 0x%x\n", sizeReservedForPagingStructures);
 
     // 1. We cannot zero the memory before mapping it (because it's not mapped)
     // 2. We cannot zero it after it was mapped because we already have some entries
@@ -420,7 +432,8 @@ VmmSetupPageTables(
                          TRUE,
                          FALSE
                          );
-    LOG_TRACE_VMM("VmmMapMemoryInternal finished\n");
+
+    LOG("VmmMapMemoryInternal finished\n");
 
     if (PagingDataWhereToMap != PagingData)
     {
