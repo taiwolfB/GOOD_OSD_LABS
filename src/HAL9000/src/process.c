@@ -7,6 +7,7 @@
 #include "bitmap.h"
 #include "pte.h"
 #include "pe_exports.h"
+#include "filesystem.h"
 
 typedef struct _PROCESS_SYSTEM_DATA
 {
@@ -271,6 +272,11 @@ ProcessCreate(
         LOG_TRACE_PROCESS("Successfully created VA space for process!\n");
 
         // Start execution
+        // 1. a) The executable is loaded in the memory in this function by using the 
+        // MmuLoadPe function based on the NT header.
+        // 1. b) Yes, when we create a process we also create a thread because the thread
+        // is the one to execute the process' function code. Also, when we create a thread 
+        // we are not creating a process every time because the threads are not the parents of the processes.
         status = UmApplicationRun(pProcess, FALSE, NULL);
         if (!SUCCEEDED(status))
         {
@@ -425,10 +431,10 @@ static
 STATUS
 _No_competing_thread_
 _ProcessInit(
-    IN_Z        char*       Name,
-    IN_OPT_Z    char*       Arguments,
-    OUT_PTR     PPROCESS*   Process
-    )
+    IN_Z        char* Name,
+    IN_OPT_Z    char* Arguments,
+    OUT_PTR     PPROCESS* Process
+)
 {
     PPROCESS pProcess;
     STATUS status;
@@ -442,7 +448,7 @@ _ProcessInit(
     status = STATUS_SUCCESS;
 
     // we add +1 because of the NULL terminator
-    nameSize = (strlen(Name)+1)*sizeof(char);
+    nameSize = (strlen(Name) + 1) * sizeof(char);
     bRefCntInitialized = FALSE;
 
     __try
@@ -468,8 +474,8 @@ _ProcessInit(
         bRefCntInitialized = TRUE;
 
         status = ExEventInit(&pProcess->TerminationEvt,
-                             ExEventTypeNotification,
-                             FALSE);
+            ExEventTypeNotification,
+            FALSE);
         if (!SUCCEEDED(status))
         {
             LOG_FUNC_ERROR("ExEventInit", status);
@@ -511,6 +517,42 @@ _ProcessInit(
         // with the system management in case something goes wrong (PID + full process
         // list management)
         pProcess->Id = _ProcessSystemRetrieveNextPid();
+
+        pProcess->CurrentMaximumHandle = 1;
+        pProcess->ProcessHandle = 1;
+        pProcess->TerminationStatus = 0;
+        pProcess->IsStdoutOpen = TRUE;
+
+        DWORD childProcessTableHashSize = HashTablePreinit(&pProcess->ChildProcessTable, 64, sizeof(UM_HANDLE));
+        PHASH_TABLE_DATA pChildProcessHashTableData = ExAllocatePoolWithTag(PoolAllocateZeroMemory, childProcessTableHashSize, HEAP_TEST_TAG, 0);
+        if (NULL == pChildProcessHashTableData)
+        {
+            LOG_FUNC_ERROR_ALLOC("ExAllocatePoolWithTag", childProcessTableHashSize);
+            status = STATUS_HEAP_INSUFFICIENT_RESOURCES;
+            __leave;
+        }
+        HashTableInit(&pProcess->ChildProcessTable, pChildProcessHashTableData, HashFuncGenericIncremental, FIELD_OFFSET(PROCESS, ProcessHandle) - FIELD_OFFSET(PROCESS, ChildProcessEntry));
+
+        DWORD fileTableHashSize = HashTablePreinit(&pProcess->FileTable, 64, sizeof(UM_HANDLE));
+        PHASH_TABLE_DATA pFileHashTableData = ExAllocatePoolWithTag(PoolAllocateZeroMemory, fileTableHashSize, HEAP_PROCESS_TAG, 0);
+        if (NULL == pFileHashTableData)
+        {
+            LOG_FUNC_ERROR_ALLOC("ExAllocatePoolWithTag", fileTableHashSize);
+            status = STATUS_HEAP_INSUFFICIENT_RESOURCES;
+            __leave;
+        }
+        HashTableInit(&pProcess->FileTable, pFileHashTableData, HashFuncGenericIncremental, FIELD_OFFSET(FILE_OBJECT, FileHandle) - FIELD_OFFSET(FILE_OBJECT, FileTableEntry));
+
+        DWORD threadTableHashSize = HashTablePreinit(&pProcess->ThreadTable, 64, sizeof(UM_HANDLE));
+        PHASH_TABLE_DATA pThreadHashTableData = ExAllocatePoolWithTag(PoolAllocateZeroMemory, threadTableHashSize, HEAP_PROCESS_TAG, 0);
+        if (NULL == pThreadHashTableData)
+        {
+            LOG_FUNC_ERROR_ALLOC("ExAllocatePoolWithTag", threadTableHashSize);
+            status = STATUS_HEAP_INSUFFICIENT_RESOURCES;
+            __leave;
+        }
+        HashTableInit(&pProcess->ThreadTable, pThreadHashTableData, HashFuncGenericIncremental, FIELD_OFFSET(THREAD, ThreadHandle) - FIELD_OFFSET(THREAD, ThreadTableEntry));
+
 
         MutexAcquire(&m_processData.ProcessListLock);
         InsertTailList(&m_processData.ProcessList, &pProcess->NextProcess);

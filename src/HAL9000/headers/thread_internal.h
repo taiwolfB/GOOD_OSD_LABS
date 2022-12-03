@@ -4,6 +4,12 @@
 #include "ref_cnt.h"
 #include "ex_event.h"
 #include "thread.h"
+// Bogdan :
+// Added in order to have access to the PMUTEX type used for
+// WaitedMutex field in Thread structure.
+#include "mutex.h"
+#include "hash_table.h"
+#include "syscall_defs.h"
 
 typedef enum _THREAD_STATE
 {
@@ -35,13 +41,26 @@ typedef struct _THREAD
 {
     REF_COUNT               RefCnt;
 
-    struct _THREAD          *Self;
+    struct _THREAD* Self;
 
     TID                     Id;
-    char*                   Name;
+    char* Name;
 
     // Currently the thread priority is not used for anything
     THREAD_PRIORITY         Priority;
+
+    // Bogdan:
+    // Field used to keep track of the original priority of the thread,
+    // the one which was given at thread creation such that it can be
+    // restored after priority donation, on lock release.
+    THREAD_PRIORITY         RealPriority;
+    // Bogdan:
+    // A list used to hold the mutexes which were acquired by this thread.
+    LIST_ENTRY              AcquiredMutexesList;
+    // Bogdan:
+    // A field to keep track of the mutex after which the thread is waiting for.
+    PMUTEX                  WaitedMutex;
+
     THREAD_STATE            State;
 
     // valid only if State == ThreadStateTerminated
@@ -89,8 +108,13 @@ typedef struct _THREAD
     // MUST be non-NULL for all threads which belong to user-mode processes
     PVOID                   UserStack;
 
-    struct _PROCESS*        Process;
-} THREAD, *PTHREAD;
+    struct _PROCESS* Process;
+
+    // An  entry  to the Threadtable of the process which created the thread.
+    HASH_ENTRY              ThreadTableEntry;
+
+    UM_HANDLE               ThreadHandle;
+} THREAD, * PTHREAD;
 
 //******************************************************************************
 // Function:     ThreadSystemPreinit
@@ -104,7 +128,7 @@ void
 _No_competing_thread_
 ThreadSystemPreinit(
     void
-    );
+);
 
 //******************************************************************************
 // Function:     ThreadSystemInitMainForCurrentCPU
@@ -118,7 +142,7 @@ ThreadSystemPreinit(
 STATUS
 ThreadSystemInitMainForCurrentCPU(
     void
-    );
+);
 
 //******************************************************************************
 // Function:     ThreadSystemInitIdleForCurrentCPU
@@ -132,7 +156,7 @@ ThreadSystemInitMainForCurrentCPU(
 STATUS
 ThreadSystemInitIdleForCurrentCPU(
     void
-    );
+);
 
 //******************************************************************************
 // Function:     ThreadCreateEx
@@ -149,13 +173,13 @@ ThreadSystemInitIdleForCurrentCPU(
 //******************************************************************************
 STATUS
 ThreadCreateEx(
-    IN_Z        char*               Name,
+    IN_Z        char* Name,
     IN          THREAD_PRIORITY     Priority,
     IN          PFUNC_ThreadStart   Function,
     IN_OPT      PVOID               Context,
-    OUT_PTR     PTHREAD*            Thread,
-    INOUT       struct _PROCESS*    Process
-    );
+    OUT_PTR     PTHREAD* Thread,
+    INOUT       struct _PROCESS* Process
+);
 
 //******************************************************************************
 // Function:     ThreadTick
@@ -168,7 +192,7 @@ ThreadCreateEx(
 void
 ThreadTick(
     void
-    );
+);
 
 //******************************************************************************
 // Function:     ThreadBlock
@@ -180,7 +204,7 @@ ThreadTick(
 void
 ThreadBlock(
     void
-    );
+);
 
 //******************************************************************************
 // Function:     ThreadUnblock
@@ -194,7 +218,7 @@ ThreadBlock(
 void
 ThreadUnblock(
     IN      PTHREAD              Thread
-    );
+);
 
 //******************************************************************************
 // Function:     ThreadYieldOnInterrupt
@@ -206,7 +230,7 @@ ThreadUnblock(
 BOOLEAN
 ThreadYieldOnInterrupt(
     void
-    );
+);
 
 //******************************************************************************
 // Function:     ThreadTerminate
@@ -222,7 +246,7 @@ ThreadYieldOnInterrupt(
 void
 ThreadTerminate(
     INOUT   PTHREAD             Thread
-    );
+);
 
 //******************************************************************************
 // Function:     ThreadTakeBlockLock
@@ -236,7 +260,7 @@ ThreadTerminate(
 void
 ThreadTakeBlockLock(
     void
-    );
+);
 
 //******************************************************************************
 // Function:     ThreadExecuteForEachThreadEntry
@@ -250,7 +274,7 @@ STATUS
 ThreadExecuteForEachThreadEntry(
     IN      PFUNC_ListFunction  Function,
     IN_OPT  PVOID               Context
-    );
+);
 
 
 //******************************************************************************O
@@ -269,7 +293,7 @@ ThreadExecuteForEachThreadEntry(
 void
 SetCurrentThread(
     IN      PTHREAD     Thread
-    );
+);
 
 //******************************************************************************
 // Function:     ThreadSetPriority
@@ -281,4 +305,55 @@ SetCurrentThread(
 void
 ThreadSetPriority(
     IN      THREAD_PRIORITY     NewPriority
+);
+
+
+
+
+//******************************************************************************
+// Function:     ThreadComparePriorityReadyList
+// Description:  Compares the List entries which are supposed to point to entries 
+//               of type PTHREAD in the first two parameters and returns
+//               1 if the first is smaller, -1 if the second is smaller or 
+//               0 if they are equal.
+// Returns:      INT64
+// Parameter:    IN PLIST_ENTRY FirstElem - The first list entry to be compared.
+//               IN PLIST_ENTRY SecondElem - The second  list entry to be compared.
+//               IN_OPT PVOID Context - extra parameters for the function, 
+//               should be unreferenced.
+//******************************************************************************
+INT64
+(__cdecl ThreadComparePriorityReadyList)
+(IN      PLIST_ENTRY     FirstElem,
+    IN      PLIST_ENTRY     SecondElem,
+    IN_OPT  PVOID           Context
     );
+
+
+
+//******************************************************************************
+// Function:     ThreadRecomputePriority
+// Description:  Recomputes the priority of a thread based on the waiting list 
+//               and based on the mutexes held by that thread.
+// Returns:      void
+// Parameter:    IN_OUT PTHREAD Thread - Thread which needs
+//               to have his priority recomputed.
+//******************************************************************************
+void
+ThreadRecomputePriority(
+    INOUT   PTHREAD     Thread
+);
+
+//******************************************************************************
+// Function:     ThreadDonatePriority
+// Description:  Donates the priority of the currentThread to the mutexHolder
+//               and resolves the chain donation problem.
+// Returns:      void
+// Parameter:    INOUT PTHREAD currentThread - Thread which donates the priority.
+//               INOUT PTHREAD MutexHolder - Thread which receives the priority.  
+//******************************************************************************
+void
+ThreadDonatePriority(
+    INOUT PTHREAD  currentThread,
+    INOUT PTHREAD MutexHolder
+);

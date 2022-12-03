@@ -74,7 +74,7 @@ SystemInit(
     // in our case - for 0x2 it will be only  execute
     //             - for 0x1 it will be write 
     //             - for 0x0 it will be read
-    LogSystemInit(LogLevelTrace, LogComponentMmu, TRUE);
+    LogSystemInit(LogLevelInfo, LogComponentMmu, TRUE);
 
     // if validation fails => the system will HALT
     CpuMuValidateConfiguration();

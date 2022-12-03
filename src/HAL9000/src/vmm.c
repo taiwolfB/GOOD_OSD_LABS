@@ -270,12 +270,12 @@ VmmMapMemoryInternal(
     ctx.Uncacheable = Uncacheable;
     // 1)  The rule for mapping the VA2PA is that the VA for Kernel mode starts with 0XFFFF8 
     // for every Kernel mode address and it maps all the lower bits in a 1:1 mapping.
-    LOG("Will map virtual address 0x%X to physical address 0x%X\n",
+    /*LOG("Will map virtual address 0x%X to physical address 0x%X\n",
             BaseAddress, PhysicalAddress);
     if (!_VmIsKernelAddress(BaseAddress)) {
         LOG("Will map user space virtual address 0x%X to physical address 0x%X\n",
             BaseAddress, PhysicalAddress);
-    }
+    }*/
     cr3.Raw = (QWORD) PagingData->BasePhysicalAddress;
 
     _VmWalkPagingTables(cr3,

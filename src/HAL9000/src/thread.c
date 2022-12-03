@@ -353,6 +353,20 @@ ThreadCreateEx(
 
         bProcessIniialThread = (Function == Process->HeaderInfo->Preferred.AddressOfEntryPoint);
 
+    // 2. a) When Process->PagingData->Data.KernelSpace is TRUE, the function
+    // which will be executed in Kernel mode will be set. It mainly deals with setting up 
+    // the inital state of the thread.
+    // 2. b) When Process->PagingData->Data.KernelSpace is FALSE it means that the stack
+    // and the needed resources for the User mode are allocated. Also, when the bProcessIniialThread 
+    // flag is set it means that we are the initial thread which needs to have his User stack set up
+    // because we have parameters to be passed. If it is false, it means that we do not have parameters
+    // to be passed.
+    // 3. They can access the same global variable because reading the global variable is not prohibited,
+    // though, writing it might be forbidden by the threads in different processes.
+    // 4. a) Two threads in the same process can access the same UM_HANDLE becaue the threads have the same parent,
+    // thus they have knowledge of the resources accessed by the parent process.
+    // 4. b) However, if the processes are different, they will not be able to access the same UM_HANDLE because
+    // each process must be self-contained, not sharing its resources to other process.
         // We are the first thread => we must pass the argc and argv parameters
         // and the whole command line which spawned the process
         if (bProcessIniialThread)
